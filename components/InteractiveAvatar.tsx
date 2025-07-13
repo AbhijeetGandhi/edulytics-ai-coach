@@ -507,7 +507,7 @@ const InteractiveAvatar: FC<InteractiveAvatarProps> = ({
               </div>
             ) : (
               /* LOADER (unchanged) */
-              <div className="flex flex-col items-center gap-3 mt-10">
+              <div className="flex flex-col items-center gap-3 my-auto">
                 <ScaleLoader color="#6366F1" height={35} width={4} radius={2} />
                 <p className="text-xl font-bold mt-2 text-gray-300">
                   Loading your personalised agent&hellip;
