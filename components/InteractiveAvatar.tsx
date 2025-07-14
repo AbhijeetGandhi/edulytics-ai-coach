@@ -50,13 +50,12 @@ const InteractiveAvatar: FC<InteractiveAvatarProps> = ({
   const [stream, setStream] = useState<MediaStream>();
   const [debug, setDebug] = useState<string>();
   const [knowledgeId, setKnowledgeId] = useState<string>("");
-  const [avatarId, setAvatarId] = useState<string>("Katya_Chair_Sitting_public");
+  const [avatarId, setAvatarId] = useState<string>("Wayne_20240711");
   const [language, setLanguage] = useState<string>("en");
   const [data, setData] = useState<StartAvatarResponse>();
   const [text, setText] = useState<string>("");
-  const [chatMode, setChatMode] = useState("voice_mode");
+  const [chatMode, setChatMode] = useState("text_mode");
   const [isUserTalking, setIsUserTalking] = useState(false);
-  const [isLogsOpen, setIsLogsOpen] = useState(true);   // ← NEW
   const [studentData, setStudentData] = useState<{
     name: string;
     age: number | string;
@@ -78,9 +77,6 @@ const InteractiveAvatar: FC<InteractiveAvatarProps> = ({
   );
   const [taskType, setTaskType] = useState<TaskType>(TaskType.REPEAT);
   const [avatarSpeech, setAvatarSpeech] = useState<string>("");
-  const [funFacts, setFunFacts] = useState<string[]>([]);
-  const [isLoadingFacts, setIsLoadingFacts] = useState(false);
-  const [factsError, setFactsError] = useState<string>("");
 
   const mediaStream = useRef<HTMLVideoElement>(null);
   const avatar = useRef<StreamingAvatar | null>(null);
@@ -98,44 +94,7 @@ const InteractiveAvatar: FC<InteractiveAvatarProps> = ({
     return username["username"];
   }
 
-  async function fetchFunFacts(course: string, age: string) {
-    if (!course || !age) {
-      setFactsError("Course or age is missing");
-      appendLog("Fun facts fetch skipped: missing course or age");
-      return;
-    }
-    setIsLoadingFacts(true);
-    setFactsError("");
-    appendLog(`Fetching fun facts, specially for you.`);
-    try {
-      const response = await fetch("/api/openai-fun-facts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ course, age }),
-      });
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Server error: ${response.status} - ${errorText}`);
-      }
-      const data = await response.json();
-      if (!data.facts || !Array.isArray(data.facts)) {
-        throw new Error("Invalid facts format received");
-      }
-      setFunFacts(data.facts);
-      if (data.facts.length === 0) {
-        setFactsError("No fun facts returned from OpenAI");
-        appendLog("No fun facts returned from OpenAI");
-      }
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error("Fun facts fetch error:", error);
-      appendLog(`Fun facts fetch error: ${errorMsg}`);
-      setFactsError(errorMsg);
-      toast.error(`Failed to fetch fun facts: ${errorMsg}`);
-    } finally {
-      setIsLoadingFacts(false);
-    }
-  }
+  
 
   useEffect(() => {
     const username = getLoggedInUsername();
@@ -158,7 +117,6 @@ const InteractiveAvatar: FC<InteractiveAvatarProps> = ({
             knowledge_id: studentInfo.new_knowledge_id,
           });
           appendLog(`Loaded data for user: ${username}, Knowledge ID: ${studentInfo.knowledge_id}`);
-          await fetchFunFacts(studentInfo.course, String(studentInfo.age));
         } else {
           const errorData = await response.json();
           setDebug(errorData.error || `User ${username} not found in database`);
@@ -269,6 +227,13 @@ const InteractiveAvatar: FC<InteractiveAvatarProps> = ({
         isInputAudioMuted: false,
       } as any);
       setChatMode("voice_mode");
+
+      await avatar.current?.speak({
+        text: "Hi there, how can I help you today?",
+        taskType: TaskType.TALK,          // TALK works in voice-chat; REPEAT is fine in text-mode
+        taskMode: TaskMode.SYNC           // wait until the line finishes
+      });
+
       appendLog("Session started successfully");
     } catch (error) {
       console.error("Error starting avatar session:", error);
@@ -397,21 +362,9 @@ const InteractiveAvatar: FC<InteractiveAvatarProps> = ({
     }
   };
 
+
   const webcamRef = useRef<HTMLVideoElement>(null);
   const [webcamStream, setWebcamStream] = useState<MediaStream>();
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        setWebcamStream(stream);
-      } catch (err) {
-        console.error("Webcam access denied:", err);
-        appendLog("Webcam access denied");
-      }
-    })();
-  }, []);
-
   useEffect(() => {
     if (webcamStream && webcamRef.current) {
       webcamRef.current.srcObject = webcamStream;
@@ -419,186 +372,138 @@ const InteractiveAvatar: FC<InteractiveAvatarProps> = ({
     }
   }, [webcamStream]);
 
-
-  const videoConstraints = {
-    width: { ideal: 1280 },
-    height: { ideal: 720 },
-    facingMode: "user",          // front camera on phones
-  };
-
-
   return (
-    <>
-      <div className={`w-full h-full max-h-full flex relative ${isLogsOpen ? "gap-4" : "gap-0"}`}>
-        <Card className="w-full flex flex-col relative">
-          <CardBody className="h-[500px] w-full flex flex-col">
-            {/* ─────────── VIDEO GRID ─────────── */}
-            {stream ? (
-              <>
-                {/* VIDEO GRID */}
-                <div className="grid grid-cols-2 gap-4 flex-1">
-                  {/* Avatar feed wrapper */}
-                  <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden">
-                    <video
-                      ref={mediaStream}
-                      autoPlay
-                      playsInline
-                      className="absolute inset-0 w-full h-full object-contain"
-                    />
-                  </div>
-
-                  {/* Webcam feed wrapper */}
-                  <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden">
-                    <Webcam
-                      audio={false}
-                      mirrored
-                      videoConstraints={{
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 },
-                        facingMode: "user",
-                        aspectRatio: 16 / 9,               // ask the camera for 16 : 9 too
-                      }}
-                      className="absolute inset-0 w-full h-full object-cover"
-                    />
-                  </div>
+    <div className="w-full h-full max-h-full rounded-2xl">
+      <Card className="w-[100%] h-full rounded-2xl">
+        <CardBody className="h-[100%] w-full flex flex-col justify-center items-center">
+          {stream ? (
+            <div className="h-full w-full justify-center items-center flex rounded-lg overflow-hidden relative">
+              <div className="grid grid-cols-2 gap-4 flex-1">
+                {/* Avatar feed wrapper */}
+                <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden">
+                  <video
+                    ref={mediaStream}
+                    autoPlay
+                    playsInline
+                    className="absolute inset-0 w-full h-full object-contain"
+                  />
                 </div>
 
-
-                {/* ─────────── CONTROL BAR ─────────── */}
-                <div className="flex items-center justify-between mt-4">
-                  <Chip
-                    variant="flat"
-                    className="bg-gradient-to-tr from-indigo-500 to-indigo-300 text-white font-semibold"
-                  >
-                    Session&nbsp;{formatSessionDuration()}
-                  </Chip>
-
-                  <div className="flex gap-2">
-                    <Button
-                      className="bg-gradient-to-tr from-indigo-500 to-indigo-300 text-white"
-                      size="md"
-                      variant="shadow"
-                      onClick={handleInterrupt}
-                    >
-                      Interrupt task
-                    </Button>
-                    <Button
-                      className="bg-gradient-to-tr from-indigo-500 to-indigo-300 text-white"
-                      size="md"
-                      variant="shadow"
-                      onClick={endSession}
-                    >
-                      End session
-                    </Button>
-                  </div>
+                {/* Webcam feed wrapper */}
+                <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden">
+                  <Webcam
+                    audio={false}
+                    mirrored
+                    videoConstraints={{
+                      width: { ideal: 1280 },
+                      height: { ideal: 720 },
+                      facingMode: "user",
+                      aspectRatio: 16 / 9,               // ask the camera for 16 : 9 too
+                    }}
+                    className="absolute inset-0 w-full h-full object-cover"
+                  />
                 </div>
-              </>
-            ) : !isLoadingSession ? (
-              /* START-SESSION placeholder (unchanged) */
-              <div className="h-full w-full flex flex-col items-center justify-center gap-8">
+              </div>
+              {avatarSpeech && (
+                <div className="absolute bottom-5 left-5 bg-black bg-opacity-50 text-white p-2 rounded">
+                  {avatarSpeech}
+                </div>
+              )}
+              <div className="flex flex-col gap-2 absolute bottom-3 right-7">
                 <Button
-                  className="bg-gradient-to-tr from-indigo-500 to-indigo-300 w-[30%] text-white"
+                  className="bg-gradient-to-tr from-indigo-500 to-indigo-300 text-white rounded-lg"
                   size="md"
                   variant="shadow"
-                  onClick={startSession}
+                  onClick={handleInterrupt}
                 >
-                  Start session
+                  Interrupt task
+                </Button>
+                <Button
+                  className="bg-gradient-to-tr from-indigo-500 to-indigo-300 text-white rounded-lg"
+                  size="md"
+                  variant="shadow"
+                  onClick={endSession}
+                >
+                  End session
                 </Button>
               </div>
-            ) : (
-              /* LOADER (unchanged) */
-              <div className="flex flex-col items-center gap-3 my-auto">
-                <ScaleLoader color="#6366F1" height={35} width={4} radius={2} />
-                <p className="text-xl font-bold mt-2 text-gray-300">
-                  Loading your personalised agent&hellip;
-                </p>
-              </div>
-            )}
-          </CardBody>
-
-
-
-
-          <div className="flex flex-1 max-h-[36%] min-h-[36%] h-[36%] gap-2 px-2">
-            {(
-              <>
-                <Card className="w-full max-w-[350px] mb-4 p-4 bg-[#19181A] rounded-lg text-[rgb(255 255 255)]">
-                  <h3 className="text-lg font-bold">Student Information</h3>
-                  <p><strong>Name:</strong> {studentData.name}</p>
-                  <p><strong>Age:</strong> {studentData.age}</p>
-                  <p><strong>Course:</strong> {studentData.course}</p>
-                </Card>
-                <Card className="w-full mb-4 p-4 bg-[#19181A] rounded-lg text-[rgb(255 255 255)]">
-                  <h3 className="text-lg font-bold mb-2">Fun Facts</h3>
-                  <CardBody className="overflow-y-scroll">
-                    {isLoadingFacts ? (
-                      <Spinner color="default" size="sm" />
-                    ) : factsError ? (
-                      <p className="text-red-400">{factsError}</p>
-                    ) : funFacts.length === 0 ? (
-                      <p>Loading fun facts for you...</p>
-                    ) : (
-                      <ul className="flex flex-col gap-2 w-full list-none">
-                        {funFacts.map((fact, index) => (
-                          <div key={index} className="text-sm ">
-                            <Chip
-                              variant="flat"
-                              className="bg-gradient-to-tr from-[#] to-indigo-300 text-white h-auto w-full rounded-md"
-                              classNames={{
-                                content: "whitespace-normal break-words text-left text-sm leading-normal py-2",
-                              }}
-                            >
-                              {fact}
-                            </Chip>
-                          </div>
-                        ))}
-                      </ul>
-                    )}
+              <div className="absolute top-3 left-7">
+                <Card className="bg-gradient-to-tr from-indigo-500 to-indigo-300 text-white p-2">
+                  <CardBody className="p-1">
+                    <Chip
+                      variant="flat"
+                      className="bg-white text-indigo-600 font-semibold"
+                    >
+                      Session: {formatSessionDuration()}
+                    </Chip>
                   </CardBody>
                 </Card>
-              </>
-            )}
-          </div>
-
-
-
-
-
-        </Card>
-
-        {/* 3  Slide-out panel – same flex sibling, but width animates */}
-        <div
-          className={`transition-all duration-300 overflow-hidden
-                ${isLogsOpen ? "w-[25%] max-w-[350px]" : "w-0"}`}
-        >
-          <Card className="h-full">
-            <CardBody className="overflow-y-scroll">
-              <h3 className="text-lg font-bold mb-2">Logs</h3>
-              {logs.length === 0 ? (
-                <p>No logs available</p>
-              ) : (
-                <ul className="flex flex-col gap-1 text-white">
-                  {logs.map((l, i) => (
-                    <li key={i} className="text-sm">{l}</li>
-                  ))}
-                </ul>
+              </div>
+            </div>
+          ) : !isLoadingSession ? (
+            <div className="h-full w-full justify-center items-center flex flex-col gap-8 self-center">
+              <div className="flex flex-col gap-2 w-full"></div>
+              <Button
+                className="bg-gradient-to-tr from-indigo-500 to-indigo-300 w-[30%] text-white"
+                size="md"
+                variant="shadow"
+                onClick={startSession}
+              >
+                Start session
+              </Button>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-3">
+              <ScaleLoader color="#6366F1" height={35} width={4} radius={2} speedMultiplier={1.2} />  {/* ✅ new loader */}
+              <p className="fade-loader-text text-xl font-bold mt-2 text-gray-300">
+                Loading your personalised agent&hellip;
+              </p>
+            </div>
+          )}
+        </CardBody>
+        
+        <Divider />
+        <CardFooter className="flex flex-col gap-3 h-[25%] relative">
+          <Tabs
+            aria-label="Options"
+            selectedKey={chatMode}
+            onSelectionChange={(v) => {
+              handleChangeChatMode(v);
+            }}
+          >
+            <Tab key="text_mode" title="Text mode" />
+            <Tab key="voice_mode" title="Voice mode" />
+          </Tabs>
+          {chatMode === "text_mode" ? (
+            <div className="w-full h-fit flex relative">
+              <InteractiveAvatarTextInput
+                disabled={!stream}
+                input={text}
+                label="Chat"
+                loading={isLoadingRepeat}
+                placeholder="Type something for the avatar to respond"
+                setInput={setText}
+                onSubmit={handleSpeak}
+              />
+              {text && (
+                <Chip className="absolute right-16 top-3">Listening</Chip>
               )}
-            </CardBody>
-          </Card>
-        </div>
-
-
-
-      </div>
-      {/* <button
-        onClick={() => setIsLogsOpen(!isLogsOpen)}
-        className="absolute right-0 top-1/2 -translate-y-1/2 z-10
-               bg-indigo-500 hover:bg-indigo-600 text-white
-               rounded-l-lg px-2 py-1 focus:outline-none"
-      >
-        <span className="rotate-[270deg]">{isLogsOpen ? "Hide Logs" : "Show Logs"}</span>
-      </button> */}
-    </>
+            </div>
+          ) : (
+            <div className="w-full text-center h-fit">
+              <Button
+                isDisabled={!isUserTalking}
+                className="bg-gradient-to-tr from-indigo-500 to-indigo-300 text-white"
+                size="md"
+                variant="shadow"
+              >
+                {isUserTalking ? "Listening" : "Voice chat"}
+              </Button>
+            </div>
+          )}
+        </CardFooter>
+      </Card>
+    </div>
   );
 }
 
