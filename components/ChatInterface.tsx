@@ -15,7 +15,7 @@ import Markdown from "react-markdown";
 import { OpenAI } from "openai";
 import { PaperClipIcon, PhotoIcon } from "@heroicons/react/24/outline";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
-
+import { knowledgease } from "@/lib/knowledgebase";
 
 const openai = new OpenAI({
   apiKey: process.env.NEXT_PUBLIC_OPENAI_API_KEY,
@@ -38,11 +38,44 @@ const ChatInterface = () => {
   const [isImageMode, setIsImageMode] = useState<boolean>(false);
   const [isParsingFiles, setIsParsingFiles] = useState<boolean>(false);
   const [uploadedFiles, setUploadedFiles] = useState<{ name: string; content: string }[]>([]);
+  const [studentName, setStudentName] = useState<string>("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  function getLoggedInUsername() {
+    const storedUser = localStorage.getItem("user");
+    if (!storedUser) return null;
+    const user = JSON.parse(storedUser);
+    return user?.username || null;
+  }
+
+  useEffect(() => {
+    const username = getLoggedInUsername();
+    if (!username) {
+      toast.error("No logged-in user found.");
+      return;
+    }
+
+    async function loadStudentData() {
+      try {
+        const response = await fetch(`/api/student-data?username=${username}`);
+        if (response.ok) {
+          const studentInfo = await response.json();
+          setStudentName(studentInfo.name);
+        } else {
+          toast.error("Failed to load student data.");
+        }
+      } catch (e) {
+        console.error("Error loading student data:", e);
+        toast.error("Error loading student data.");
+      }
+    }
+
+    loadStudentData();
+  }, []);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -129,6 +162,7 @@ const ChatInterface = () => {
       } else {
         // Explicitly type the messages array for the API call
         const apiMessages: ChatCompletionMessageParam[] = [
+          { role: "system", content: knowledgease.SQ },
           ...messages.map((msg) => {
             if (msg.role === "user") {
               return {
