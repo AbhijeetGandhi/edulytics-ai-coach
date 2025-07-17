@@ -1,3 +1,5 @@
+"use client";
+
 import type { StartAvatarResponse } from "@heygen/streaming-avatar";
 import StreamingAvatar, {
   AvatarQuality,
@@ -26,7 +28,7 @@ import { useMemoizedFn, usePrevious } from "ahooks";
 import InteractiveAvatarTextInput from "./InteractiveAvatarTextInput";
 import { AVATARS, STT_LANGUAGE_LIST } from "@/app/lib/constants";
 import { toast } from "react-toastify";
-import { ScaleLoader } from "react-spinners";   // new ⬅️
+import { ScaleLoader } from "react-spinners";
 import Webcam from "react-webcam";
 import { FC } from "react";
 
@@ -43,7 +45,6 @@ const InteractiveAvatar: FC<InteractiveAvatarProps> = ({
   defaultAvatar,
   defaultKnowledge,
   hideSelectors = false,
-
 }) => {
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [isLoadingRepeat, setIsLoadingRepeat] = useState(false);
@@ -80,6 +81,7 @@ const InteractiveAvatar: FC<InteractiveAvatarProps> = ({
 
   const mediaStream = useRef<HTMLVideoElement>(null);
   const avatar = useRef<StreamingAvatar | null>(null);
+  const eventHandlers = useRef<Record<string, (e: any) => void>>({});
 
   const appendLog = (message: string) => {
     if (logs.includes("Loaded data for user")) return;
@@ -93,8 +95,6 @@ const InteractiveAvatar: FC<InteractiveAvatarProps> = ({
     appendLog(`Retrieved username: ${username["username"]}`);
     return username["username"];
   }
-
-  
 
   useEffect(() => {
     const username = getLoggedInUsername();
@@ -158,50 +158,62 @@ const InteractiveAvatar: FC<InteractiveAvatarProps> = ({
   async function startSession() {
     setIsLoadingSession(true);
     appendLog("Starting session");
-    const newToken = await fetchAccessToken();
 
+    // Fetch a fresh token for each session
+    const newToken = await fetchAccessToken();
     if (!newToken) {
       setIsLoadingSession(false);
+      appendLog("Failed to fetch access token");
+      toast.error("Failed to fetch access token. Please try again.");
       return;
     }
 
+    // Create a new StreamingAvatar instance
     avatar.current = new StreamingAvatar({
       token: newToken,
       basePath: baseApiUrl(),
     });
 
-    avatar.current.on(StreamingEvents.AVATAR_START_TALKING, (e) => {
-      appendLog("Avatar started talking");
-    });
-    avatar.current.on(StreamingEvents.AVATAR_STOP_TALKING, (e) => {
-      appendLog("Avatar stopped talking");
-    });
-    avatar.current.on(StreamingEvents.STREAM_DISCONNECTED, () => {
-      appendLog("Stream disconnected");
-      endSession();
-    });
-    avatar.current?.on(StreamingEvents.STREAM_READY, (event) => {
-      appendLog("Stream ready");
-      setStream(event.detail);
-      setSessionStartTime(Date.now());
-    });
-    avatar.current?.on(StreamingEvents.USER_START, (event) => {
-      appendLog("User started talking");
-      setIsUserTalking(true);
-    });
-    avatar.current?.on(StreamingEvents.USER_STOP, (event) => {
-      appendLog("User stopped talking");
-      setIsUserTalking(false);
-    });
-    avatar.current?.on(StreamingEvents.AVATAR_TALKING_MESSAGE, (event) => {
-      setAvatarSpeech(event.detail?.text || "");
-    });
-    avatar.current?.on(StreamingEvents.AVATAR_END_MESSAGE, () => {
-      setAvatarSpeech("");
-    });
-    avatar.current?.on(StreamingEvents.USER_SILENCE, () => {
-      appendLog("User is silent");
-      toast.info("You’ve been silent for a while. Please continue speaking.");
+    // Define event handlers
+    eventHandlers.current = {
+      [StreamingEvents.AVATAR_START_TALKING]: (e) => {
+        appendLog("Avatar started talking");
+      },
+      [StreamingEvents.AVATAR_STOP_TALKING]: (e) => {
+        appendLog("Avatar stopped talking");
+      },
+      [StreamingEvents.STREAM_DISCONNECTED]: () => {
+        appendLog("Stream disconnected");
+        endSession();
+      },
+      [StreamingEvents.STREAM_READY]: (event) => {
+        appendLog("Stream ready");
+        setStream(event.detail);
+        setSessionStartTime(Date.now());
+      },
+      [StreamingEvents.USER_START]: (event) => {
+        appendLog("User started talking");
+        setIsUserTalking(true);
+      },
+      [StreamingEvents.USER_STOP]: (event) => {
+        appendLog("User stopped talking");
+        setIsUserTalking(false);
+      },
+      [StreamingEvents.AVATAR_TALKING_MESSAGE]: (event) => {
+        setAvatarSpeech(event.detail?.text || "");
+      },
+      [StreamingEvents.AVATAR_END_MESSAGE]: () => {
+        setAvatarSpeech("");
+      },
+      [StreamingEvents.USER_SILENCE]: () => {
+        appendLog("User is silent");
+        toast.info("You’ve been silent for a while. Please continue speaking.");
+      },
+    };
+
+    // Set up event listeners
+    Object.entries(eventHandlers.current).forEach(([event, handler]) => {
+      avatar.current?.on(event, handler);
     });
 
     try {
@@ -222,17 +234,19 @@ const InteractiveAvatar: FC<InteractiveAvatarProps> = ({
       });
 
       setData(res);
+
+      // Speak the initial greeting immediately after creating the avatar session
+      await avatar.current?.speak({
+        text: "Hi there, how can I help you today?",
+        taskType: TaskType.REPEAT,
+        taskMode: TaskMode.SYNC,
+      });
+
       await avatar.current?.startVoiceChat({
         useSilencePrompt: false,
         isInputAudioMuted: false,
       } as any);
       setChatMode("voice_mode");
-
-      await avatar.current?.speak({
-        text: "Hi there, how can I help you today?",
-        taskType: TaskType.TALK,          // TALK works in voice-chat; REPEAT is fine in text-mode
-        taskMode: TaskMode.SYNC           // wait until the line finishes
-      });
 
       appendLog("Session started successfully");
     } catch (error) {
@@ -292,7 +306,17 @@ const InteractiveAvatar: FC<InteractiveAvatarProps> = ({
   }
 
   async function endSession() {
-    await avatar.current?.stopAvatar();
+    if (avatar.current && eventHandlers.current) {
+      // Remove all event listeners to prevent WebSocket conflicts
+      Object.entries(eventHandlers.current).forEach(([event, handler]) => {
+        avatar.current?.off(event, handler);
+      });
+      eventHandlers.current = {};
+    }
+    if (avatar.current) {
+      await avatar.current.stopAvatar();
+      avatar.current = null; // Nullify the instance to force reinitialization
+    }
     setStream(undefined);
     setSessionStartTime(null);
     setSessionDuration(0);
@@ -362,7 +386,6 @@ const InteractiveAvatar: FC<InteractiveAvatarProps> = ({
     }
   };
 
-
   const webcamRef = useRef<HTMLVideoElement>(null);
   const [webcamStream, setWebcamStream] = useState<MediaStream>();
   useEffect(() => {
@@ -398,7 +421,7 @@ const InteractiveAvatar: FC<InteractiveAvatarProps> = ({
                       width: { ideal: 1280 },
                       height: { ideal: 720 },
                       facingMode: "user",
-                      aspectRatio: 16 / 9,               // ask the camera for 16 : 9 too
+                      aspectRatio: 16 / 9,
                     }}
                     className="absolute inset-0 w-full h-full object-cover"
                   />
@@ -454,14 +477,14 @@ const InteractiveAvatar: FC<InteractiveAvatarProps> = ({
             </div>
           ) : (
             <div className="flex flex-col items-center gap-3">
-              <ScaleLoader color="#6366F1" height={35} width={4} radius={2} speedMultiplier={1.2} />  {/* ✅ new loader */}
+              <ScaleLoader color="#6366F1" height={35} width={4} radius={2} speedMultiplier={1.2} />
               <p className="fade-loader-text text-xl font-bold mt-2 text-gray-300">
-                Loading your personalised agent&hellip;
+                Loading your personalised agent…
               </p>
             </div>
           )}
         </CardBody>
-        
+
         <Divider />
         <CardFooter className="flex flex-col gap-3 h-[25%] relative">
           <Tabs
@@ -505,6 +528,6 @@ const InteractiveAvatar: FC<InteractiveAvatarProps> = ({
       </Card>
     </div>
   );
-}
+};
 
-export default InteractiveAvatar
+export default InteractiveAvatar;
